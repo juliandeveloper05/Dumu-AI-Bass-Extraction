@@ -1,6 +1,6 @@
 # 🎵 Dumu — AI Bass Extraction
 
-![Dumu](https://img.shields.io/badge/Dumu-v1.4.0-a3e635?style=flat-square) ![React](https://img.shields.io/badge/React_18-Vite_4-61DAFB?style=flat-square&logo=react) ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=flat-square&logo=fastapi) ![PyTorch](https://img.shields.io/badge/PyTorch-2.1_CPU-EE4C2C?style=flat-square&logo=pytorch) ![TensorFlow](https://img.shields.io/badge/TensorFlow-2.15-FF6F00?style=flat-square&logo=tensorflow) ![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?style=flat-square&logo=docker) ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+![Dumu](https://img.shields.io/badge/Dumu-v1.5.0-a3e635?style=flat-square) ![React](https://img.shields.io/badge/React_18-Vite_4-61DAFB?style=flat-square&logo=react) ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=flat-square&logo=fastapi) ![PyTorch](https://img.shields.io/badge/PyTorch-2.1_CPU-EE4C2C?style=flat-square&logo=pytorch) ![TensorFlow](https://img.shields.io/badge/TensorFlow-2.15-FF6F00?style=flat-square&logo=tensorflow) ![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?style=flat-square&logo=docker) ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
 > **Upload your track · Isolate the bass with AI · Export to MIDI.**
 
@@ -8,6 +8,15 @@ Dumu is a full-stack AI application that extracts the bass line from any audio f
 
 🔗 **Live:** [dumu.vercel.app](https://dumu.vercel.app)  
 🔗 **Backend API:** [julian4deep-bass-trap-ai.hf.space](https://julian4deep-bass-trap-ai.hf.space)
+
+---
+
+## ✨ What's New in v1.5.0
+
+- ✅ **Bass-tuned Basic Pitch inference** — frequency range clamped to 30–400 Hz; eliminates harmonic bleed from guitars and other instruments
+- ✅ **Stricter detection thresholds** — `onset_threshold` raised to 0.6 (suppresses fret/finger noise), `frame_threshold` raised to 0.5 (drops weak harmonic overtones and prevents note overlap), `minimum_note_length` set to 100 ms (filters sub-100ms ghost notes)
+- ✅ **Automatic MIDI quantization** — new `quantize_midi()` step snaps all note start/end times to the nearest 1/16-note grid using the detected BPM; notes shorter than one grid step are stretched rather than dropped
+- ✅ **Demucs segment fix** — corrected `--segment` from `10` to `7` seconds; the `htdemucs` Transformer architecture has a hard 7.8s maximum segment limit
 
 ---
 
@@ -46,13 +55,16 @@ Audio File (MP3/WAV/FLAC/OGG)
 [2] Bass Isolation      — Demucs htdemucs · U-Net + Transformer inference (~3-5 min)
         │
         ▼
-[3] MIDI Conversion     — Basic Pitch predict_and_save() · CNN inference
+[3] MIDI Conversion     — Basic Pitch predict_and_save() · CNN inference (30–400 Hz, bass-tuned thresholds)
         │
         ▼
-[4] Base64 Encode       — MIDI bytes → JSON response → browser download
+[4] MIDI Quantization   — pretty_midi · snap notes to 1/16-note grid at detected BPM
         │
         ▼
-[5] Cleanup             — /temp directory wiped regardless of outcome
+[5] Base64 Encode       — MIDI bytes → JSON response → browser download
+        │
+        ▼
+[6] Cleanup             — /temp directory wiped regardless of outcome
 ```
 
 ### Neural Network Visualization
@@ -71,7 +83,8 @@ Animated **data particles** flow through active connections in real-time, synchr
 ### 🎵 Audio Processing
 - **BPM Detection** — Librosa beat_track() for tempo extraction
 - **Bass Stem Isolation** — Demucs `htdemucs` neural network source separation
-- **Audio → MIDI** — Spotify's Basic Pitch CNN with ICASSP 2022 model
+- **Audio → MIDI** — Spotify's Basic Pitch CNN with ICASSP 2022 model, bass-tuned (30–400 Hz, onset 0.6, frame 0.5, min note 100ms)
+- **MIDI Quantization** — automatic 1/16-note grid snap via pretty_midi, grid step derived from detected BPM
 - Supports **MP3, WAV, FLAC, OGG** · Max 100MB
 
 ### 🖥️ Frontend
@@ -105,7 +118,7 @@ Animated **data particles** flow through active connections in real-time, synchr
 |---|---|---|
 | **Audio pre-validation** | `soundfile.info()` metadata check | Instant reject of 10+ min files |
 | **Chunked BPM detection** | 30s @ 22kHz mono + `kaiser_fast` resampling | **95% RAM reduction** (200MB → 6MB) |
-| **Demucs segmentation** | `--segment 10 --shifts 0 --int24` | **70% peak RAM reduction** (5GB → 1.5GB) |
+| **Demucs segmentation** | `--segment 7 --shifts 0 --int24` | **70% peak RAM reduction** (5GB → 1.5GB) |
 | **Aggressive GC** | `gc.set_threshold(700,10,10)` + explicit `gc.collect()` | **20-30% lower baseline** memory |
 | **Thread limiting** | `OMP/MKL/OPENBLAS_NUM_THREADS=2` | **15-25% faster** CPU inference |
 | **GPU prevention** | `CUDA_VISIBLE_DEVICES=-1` | **2-5s faster** cold starts |
@@ -127,6 +140,7 @@ Animated **data particles** flow through active connections in real-time, synchr
 | TensorFlow | 2.15 | ML engine for Basic Pitch |
 | Demucs | 4.0.1 | Neural source separation (Meta AI) |
 | Basic Pitch | 0.3.3 | Audio-to-MIDI conversion (Spotify) |
+| pretty_midi | 0.2.10 | MIDI parsing & 1/16-note quantization |
 | Librosa | 0.10.2 | Audio analysis & BPM detection |
 | NumPy | <2.0 | Numerical operations |
 | SoundFile | 0.12.1 | Audio file I/O |
@@ -317,7 +331,7 @@ docker run --memory="8g" --cpus="4" -e MAX_CONCURRENT_JOBS=2 -p 7860:7860 dumu
 ### Phase 1.4 — Memory Optimizations & Concurrency ✅ v1.4.0
 - [x] Audio duration pre-validation via `soundfile.info()` (instant reject 10+ min)
 - [x] Chunked BPM detection — 30s @ 22kHz mono (95% RAM reduction)
-- [x] Demucs segment processing — `--segment 10 --shifts 0 --int24` (70% peak RAM reduction)
+- [x] Demucs segment processing — `--segment 7 --shifts 0 --int24` (70% peak RAM reduction; 7s respects htdemucs Transformer max)
 - [x] Aggressive garbage collection — `gc.set_threshold(700,10,10)` + explicit `gc.collect()`
 - [x] Thread limiting — `OMP/MKL/OPENBLAS_NUM_THREADS=2` (15-25% faster CPU inference)
 - [x] GPU fallback prevention — `CUDA_VISIBLE_DEVICES=-1`
@@ -334,10 +348,18 @@ docker run --memory="8g" --cpus="4" -e MAX_CONCURRENT_JOBS=2 -p 7860:7860 dumu
 - [ ] **Multiple stem export** — extract drums, vocals, bass, and other stems simultaneously using Demucs multi-stem mode
 - [ ] **WebSocket progress** — upgrade from SSE to WebSocket for bidirectional communication and cancellation support
 
+### Phase 1.5 — Bass-Optimized MIDI Output ✅ v1.5.0
+- [x] Bass frequency range clamped to 30–400 Hz in Basic Pitch inference
+- [x] Raised `onset_threshold` to 0.6 — suppresses fret noise and ghost transients
+- [x] Raised `frame_threshold` to 0.5 — prevents harmonic overtone overlap
+- [x] Raised `minimum_note_length` to 100 ms — filters sub-100ms glitch notes
+- [x] Explicit `ICASSP_2022_MODEL_PATH` passed to `predict_and_save()` (required in 0.3.3)
+- [x] Fixed Demucs `--segment 10` → `7` (htdemucs Transformer hard limit is 7.8s)
+- [x] Automatic 1/16-note MIDI quantization via `pretty_midi` — groove-tight output at detected BPM
+
 ### Phase 3 — Advanced AI & Music Intelligence 📅 v3.0.0
 - [ ] **Key detection** — identify musical key and scale using Krumhansl-Schmuckler algorithm + ML classifier
 - [ ] **Chord progression analysis** — detect chord changes from the harmonic content of the audio
-- [ ] **MIDI quantization & cleanup** — snap notes to grid, remove ghost notes, apply velocity curves
 - [ ] **Smart tempo mapping** — detect tempo changes and rubato in live recordings
 - [ ] **Custom Demucs fine-tuning** — fine-tune htdemucs on bass-heavy genres (funk, jazz, metal) for better isolation
 - [ ] **Multi-model ensemble** — combine multiple separation models and select best output via perceptual quality metric
@@ -398,4 +420,4 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 ---
 
-**Dumu v1.4.0** — Made with ❤️ and 🧠 by Julian Javier Soto · © 2026
+**Dumu v1.5.0** — Made with ❤️ and 🧠 by Julian Javier Soto · © 2026
