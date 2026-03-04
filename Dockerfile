@@ -1,9 +1,23 @@
 FROM python:3.11-slim
 
+# ── Python optimization flags ─────────────────────────────────────────────────
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ── Memory & CPU optimization flags ───────────────────────────────────────────
+# Disable CUDA to prevent GPU initialization overhead
+ENV CUDA_VISIBLE_DEVICES=-1
+ENV TF_FORCE_GPU_ALLOW_GROWTH=true
+
+# Limit thread pools to prevent CPU oversubscription
+ENV OMP_NUM_THREADS=2
+ENV MKL_NUM_THREADS=2
+ENV OPENBLAS_NUM_THREADS=2
+
+# Enable Python's malloc debug hooks (helps catch memory leaks in dev)
+# ENV PYTHONMALLOC=debug  # Uncomment for debugging only
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \

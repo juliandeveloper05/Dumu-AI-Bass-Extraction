@@ -7,3 +7,6 @@ backend/temp/
 frontend/dist/
 .DS_Store
 *.mid
+
+# Claude Code config
+CLAUDE.md

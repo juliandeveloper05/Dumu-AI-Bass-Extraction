@@ -1,6 +1,8 @@
 import os
 import uuid
 import asyncio
+import subprocess
+from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -10,7 +12,63 @@ from services import job_store
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg"}
-MAX_FILE_SIZE_MB = 100
+MAX_FILE_SIZE_MB = 50  # Reduced from 100MB to prevent OOM on free-tier hosting
+
+# ── Concurrency Control ──────────────────────────────────────────────────────
+# Limit concurrent jobs to prevent memory thrashing on CPU-only hosting.
+# Free-tier environments (HF Spaces, Railway) can only handle 1-2 jobs at a time.
+MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "1"))
+job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+
+def _convert_to_mp3_if_needed(file_path: str) -> str:
+    """
+    Convert WAV/FLAC to MP3 using ffmpeg to reduce memory footprint.
+    WAV/FLAC files are 5-10x larger than MP3 for the same audio.
+
+    Returns: Path to MP3 file (original or converted)
+    """
+    ext = Path(file_path).suffix.lower()
+
+    # Only convert lossless formats (WAV, FLAC)
+    if ext not in {".wav", ".flac"}:
+        return file_path
+
+    print(f"[Routes] Converting {ext} to MP3 for faster processing...")
+    mp3_path = file_path.replace(ext, ".mp3")
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-i", file_path,
+                "-b:a", "192k",  # 192 kbps CBR (good quality, smaller than VBR)
+                "-ar", "44100",  # 44.1 kHz sample rate
+                "-ac", "2",      # Stereo
+                "-y",            # Overwrite without asking
+                mp3_path
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60  # Max 60s for conversion
+        )
+
+        if result.returncode != 0:
+            print(f"[Routes] FFmpeg conversion failed: {result.stderr}")
+            return file_path  # Fall back to original file
+
+        # Remove original file to save disk space
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+
+        print(f"[Routes] Converted to MP3: {os.path.getsize(mp3_path) / 1024 / 1024:.1f} MB")
+        return mp3_path
+
+    except Exception as e:
+        print(f"[Routes] Conversion error: {e}")
+        return file_path  # Fall back to original
 
 
 def _run_pipeline(file_path: str, job_id: str, original_filename: str) -> None:
@@ -20,6 +78,9 @@ def _run_pipeline(file_path: str, job_id: str, original_filename: str) -> None:
     stays free to respond to health checks during long Demucs jobs.
     Pushes progress events to the job store.
     """
+    # Pre-convert large lossless files to MP3
+    file_path = _convert_to_mp3_if_needed(file_path)
+
     engine = BassExtractor(file_path)
     try:
         bpm, midi_b64 = engine.process_pipeline(
@@ -67,9 +128,13 @@ async def process(audio_file: UploadFile = File(...)):
 
     # ── Create job queue and launch background task ──────────────────────────
     job_store.create_job(job_id)
-    asyncio.create_task(
-        asyncio.to_thread(_run_pipeline, file_path, job_id, audio_file.filename)
-    )
+
+    # Wrap pipeline in semaphore-protected task to limit concurrency
+    async def _protected_pipeline():
+        async with job_semaphore:
+            await asyncio.to_thread(_run_pipeline, file_path, job_id, audio_file.filename)
+
+    asyncio.create_task(_protected_pipeline())
 
     return {"job_id": job_id}
 
