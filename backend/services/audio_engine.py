@@ -11,10 +11,24 @@ import librosa
 import numpy as np
 import soundfile as sf
 from basic_pitch.inference import predict_and_save
+from basic_pitch import ICASSP_2022_MODEL_PATH
+import pretty_midi
 
 DEMUCS_MODEL = "htdemucs"
 MAX_DURATION_SECONDS = 600  # 10 minutes max to prevent OOM
 LIBROSA_CHUNK_DURATION = 30  # Process BPM detection in 30s chunks
+
+# Basic Pitch inference parameters tuned for bass guitar
+# Frequency range: B0 on a 5-string (30.87 Hz) up through high bass techniques (~400 Hz).
+# onset_threshold: lower than default (0.5) → catches fast plucks and slap attacks.
+# frame_threshold: lower than default (0.3) → preserves long sustains without early cutoff.
+# minimum_note_length: default (127.70ms) clips 16th notes at tempos above ~120 BPM;
+#   58ms covers 32nd notes up to ~130 BPM without generating noise from ghost hits.
+BASS_MIN_FREQ_HZ = 30.0
+BASS_MAX_FREQ_HZ = 400.0
+BASS_ONSET_THRESHOLD = 0.6
+BASS_FRAME_THRESHOLD = 0.5
+BASS_MIN_NOTE_LENGTH_MS = 100.0
 
 
 class BassExtractor:
@@ -95,7 +109,7 @@ class BassExtractor:
                 "--two-stems", "bass",
                 "--device", "cpu",
                 "-j", "1",
-                "--segment", "10",  # Process in 10-second chunks (default is full track)
+                "--segment", "7",   # htdemucs max segment is 7.8s; 7 keeps a safe margin
                 "--shifts", "0",  # Disable TTA (test-time augmentation)
                 "--int24",  # Use int24 instead of float32 (saves 33% WAV size)
                 "-o", self.demucs_out_dir,
@@ -143,7 +157,13 @@ class BassExtractor:
                 save_midi=True,
                 sonify_midi=False,
                 save_model_outputs=False,  # Don't save NPZ (saves disk I/O + space)
-                save_notes=False,  # Don't save CSV (saves disk I/O + space)
+                save_notes=False,          # Don't save CSV (saves disk I/O + space)
+                model_or_model_path=ICASSP_2022_MODEL_PATH,
+                minimum_frequency=BASS_MIN_FREQ_HZ,
+                maximum_frequency=BASS_MAX_FREQ_HZ,
+                onset_threshold=BASS_ONSET_THRESHOLD,
+                frame_threshold=BASS_FRAME_THRESHOLD,
+                minimum_note_length=BASS_MIN_NOTE_LENGTH_MS,
             )
 
             bass_stem_name = os.path.splitext(os.path.basename(self.bass_path))[0]
@@ -170,6 +190,50 @@ class BassExtractor:
         except Exception as e:
             print(f"[BassExtractor] Basic Pitch failed: {e}")
             raise
+
+    def quantize_midi(self) -> None:
+        """
+        Quantize all note start/end times to the nearest 1/16-note grid.
+
+        Grid step = 60 / bpm / 4  (one sixteenth note in seconds).
+        Each note end is clamped to at least one grid step after its start
+        so that tight notes don't collapse to zero duration after snapping.
+        The quantized MIDI is written back to disk and self.midi_data_b64 is
+        refreshed so the result endpoint always returns the quantized version.
+        """
+        if not self.midi_data_b64 or not self.bpm:
+            return
+
+        print(f"[BassExtractor] Quantizing MIDI to 1/16 grid at {self.bpm} BPM...")
+
+        # 1/16 note duration in seconds
+        grid = 60.0 / self.bpm / 4.0
+
+        # pretty_midi needs a file path — decode back to disk temporarily
+        midi_path = os.path.join(self.demucs_out_dir, f"quantized_{self.session_id}.mid")
+        with open(midi_path, "wb") as f:
+            f.write(base64.b64decode(self.midi_data_b64))
+
+        pm = pretty_midi.PrettyMIDI(midi_path)
+
+        for instrument in pm.instruments:
+            for note in instrument.notes:
+                snapped_start = round(note.start / grid) * grid
+                snapped_end   = round(note.end   / grid) * grid
+
+                # Guarantee at least one grid step of duration
+                if snapped_end <= snapped_start:
+                    snapped_end = snapped_start + grid
+
+                note.start = snapped_start
+                note.end   = snapped_end
+
+        pm.write(midi_path)
+
+        with open(midi_path, "rb") as f:
+            self.midi_data_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+        print("[BassExtractor] Quantization complete.")
 
     def cleanup(self) -> None:
         print("[BassExtractor] Running cleanup...")
@@ -201,6 +265,9 @@ class BassExtractor:
 
             _emit(85, "🎹 Converting to MIDI with Basic Pitch...")
             self.convert_to_midi()
+
+            _emit(95, "📐 Quantizing to 1/16 grid...")
+            self.quantize_midi()
 
             _emit(100, "✅ Done. Encoding output...")
             return self.bpm, self.midi_data_b64
