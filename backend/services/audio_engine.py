@@ -191,23 +191,30 @@ class BassExtractor:
             print(f"[BassExtractor] Basic Pitch failed: {e}")
             raise
 
-    def quantize_midi(self) -> None:
+    def quantize_midi(self, quantization: str = "1/16") -> None:
         """
-        Quantize all note start/end times to the nearest 1/16-note grid.
+        Quantize all note start/end times to the nearest grid subdivision.
 
-        Grid step = 60 / bpm / 4  (one sixteenth note in seconds).
+        quantization values:
+          "none" — skip quantization entirely
+          "1/4"  — quarter-note grid  (60 / bpm)
+          "1/8"  — eighth-note grid   (60 / bpm / 2)
+          "1/16" — sixteenth-note grid (60 / bpm / 4)  [default]
+
         Each note end is clamped to at least one grid step after its start
         so that tight notes don't collapse to zero duration after snapping.
         The quantized MIDI is written back to disk and self.midi_data_b64 is
         refreshed so the result endpoint always returns the quantized version.
         """
-        if not self.midi_data_b64 or not self.bpm:
+        if quantization == "none" or not self.midi_data_b64 or not self.bpm:
+            print(f"[BassExtractor] Skipping quantization (quantization={quantization})")
             return
 
-        print(f"[BassExtractor] Quantizing MIDI to 1/16 grid at {self.bpm} BPM...")
+        divisors = {"1/4": 1.0, "1/8": 2.0, "1/16": 4.0}
+        divisor = divisors.get(quantization, 4.0)
+        grid = 60.0 / self.bpm / divisor
 
-        # 1/16 note duration in seconds
-        grid = 60.0 / self.bpm / 4.0
+        print(f"[BassExtractor] Quantizing MIDI to {quantization} grid at {self.bpm} BPM (step={grid:.4f}s)...")
 
         # pretty_midi needs a file path — decode back to disk temporarily
         midi_path = os.path.join(self.demucs_out_dir, f"quantized_{self.session_id}.mid")
@@ -251,6 +258,7 @@ class BassExtractor:
     def process_pipeline(
         self,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        quantization: str = "1/16",
     ) -> tuple[int, str]:
         def _emit(progress: int, message: str) -> None:
             if progress_callback:
@@ -266,8 +274,9 @@ class BassExtractor:
             _emit(85, "🎹 Converting to MIDI with Basic Pitch...")
             self.convert_to_midi()
 
-            _emit(95, "📐 Quantizing to 1/16 grid...")
-            self.quantize_midi()
+            q_label = "Sin cuantizar" if quantization == "none" else f"Cuantizando a {quantization}..."
+            _emit(95, f"📐 {q_label}")
+            self.quantize_midi(quantization)
 
             _emit(100, "✅ Done. Encoding output...")
             return self.bpm, self.midi_data_b64

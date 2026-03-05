@@ -19,9 +19,10 @@ export const API_ORIGIN = import.meta.env.VITE_API_URL ?? 'http://localhost:8000
  * @param {AbortSignal} [signal] - Optional AbortController signal for cancellation
  * @returns {Promise<{ job_id: string }>}
  */
-export async function startJob(file, signal) {
+export async function startJob(file, { signal, quantization = '1/16' } = {}) {
   const formData = new FormData()
   formData.append('audio_file', file)
+  formData.append('quantization', quantization)
 
   const response = await fetch(`${API_ORIGIN}/api/process`, {
     method: 'POST',

@@ -65,7 +65,7 @@ export function useExtraction() {
     }
   }, [streamError, status])
 
-  const startExtraction = useCallback(async (file) => {
+  const startExtraction = useCallback(async (file, quantization = '1/16') => {
     // Reset state
     setStatus(Status.PROCESSING)
     setError(null)
@@ -75,7 +75,7 @@ export function useExtraction() {
     fetchingResult.current = false
 
     try {
-      const { job_id } = await startJob(file)
+      const { job_id } = await startJob(file, { quantization })
       setJobId(job_id) // This triggers the SSE connection via useProgressStream
     } catch (err) {
       const msg = err.message?.includes('Failed to fetch')

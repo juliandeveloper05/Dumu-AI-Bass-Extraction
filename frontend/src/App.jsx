@@ -13,8 +13,8 @@
  *   status === done        → show LogConsole + ResultCard
  *   status === error       → show DropZone (re-enabled) + error banner + LogConsole
  */
-import React, { useState, useCallback } from 'react'
-import { AlertCircle, Github, Waves, FileAudio, X, Zap, Loader2, Linkedin, Instagram, Mail, Phone, Heart, ExternalLink, Info } from 'lucide-react'
+import React, { useState, useCallback, useEffect } from 'react'
+import { AlertCircle, Github, Waves, FileAudio, X, Zap, Loader2, Linkedin, Instagram, Mail, Phone, Heart, ExternalLink, Info, CheckCircle2, ChevronDown } from 'lucide-react'
 
 import { useExtraction, Status } from './hooks/useExtraction'
 import DropZone      from './components/DropZone'
@@ -28,6 +28,8 @@ export default function App() {
   // purely a UI concern; the hook only cares about it at submission time.
   const [file, setFile] = useState(null)
   const [showBanner, setShowBanner] = useState(true)
+  const [quantization, setQuantization] = useState('1/16')
+  const [successToast, setSuccessToast] = useState(null)
 
   const {
     status,
@@ -47,8 +49,17 @@ export default function App() {
   }, [])
 
   const handleStart = useCallback(() => {
-    if (file) startExtraction(file)
-  }, [file, startExtraction])
+    if (file) startExtraction(file, quantization)
+  }, [file, quantization, startExtraction])
+
+  // Show success toast when extraction finishes
+  useEffect(() => {
+    if (status === Status.DONE && result) {
+      setSuccessToast(result.bpm)
+      const t = setTimeout(() => setSuccessToast(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [status, result])
 
   const handleReset = useCallback(() => {
     reset()
@@ -82,7 +93,7 @@ export default function App() {
               Dumu
             </span>
             <span className="font-mono text-xs text-zinc-600 border border-zinc-800 rounded px-1.5 py-0.5 ml-1">
-              v1.3.0
+              v1.5.0
             </span>
           </div>
 
@@ -140,6 +151,15 @@ export default function App() {
 
           {/* ── Pipeline steps indicator ──────────────────────────────────── */}
           <PipelineSteps status={status} />
+
+          {/* ── Quantization selector ─────────────────────────────────────── */}
+          {!isDone && (
+            <QuantizationSelect
+              value={quantization}
+              onChange={setQuantization}
+              disabled={isProcessing}
+            />
+          )}
 
           {/* ── Drop zone ─────────────────────────────────────────────────── */}
           {showDropZone && (
@@ -222,6 +242,11 @@ export default function App() {
 
         </div>
       </main>
+
+      {/* ── Success toast ───────────────────────────────────────────────────── */}
+      {successToast !== null && (
+        <SuccessToast bpm={successToast} onDismiss={() => setSuccessToast(null)} />
+      )}
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <footer className="border-t border-zinc-900 px-6 py-8 mt-auto">
@@ -358,6 +383,79 @@ function PipelineSteps({ status }) {
           </React.Fragment>
         )
       })}
+    </div>
+  )
+}
+
+const QUANTIZATION_OPTIONS = [
+  { value: 'none', label: 'Sin cuantizar',  description: 'Tiempos originales de Basic Pitch' },
+  { value: '1/4',  label: '1/4 — Negras',   description: 'Grilla de negras (menos preciso)' },
+  { value: '1/8',  label: '1/8 — Corcheas', description: 'Grilla de corcheas' },
+  { value: '1/16', label: '1/16 — Semicorcheas', description: 'Grilla de semicorcheas (recomendado)' },
+]
+
+/**
+ * Styled dropdown for selecting MIDI quantization resolution.
+ */
+function QuantizationSelect({ value, onChange, disabled }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="font-mono text-xs text-zinc-500 uppercase tracking-widest">
+        Cuantización MIDI
+      </label>
+      <div className="relative">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className={`
+            w-full appearance-none font-mono text-sm rounded-lg px-4 py-2.5 pr-10
+            border border-zinc-800 bg-zinc-900/80
+            transition-colors duration-150
+            focus:outline-none focus:border-acid-500/50 focus:ring-1 focus:ring-acid-500/20
+            ${disabled
+              ? 'text-zinc-600 cursor-not-allowed opacity-60'
+              : 'text-zinc-200 cursor-pointer hover:border-zinc-700'}
+          `}
+        >
+          {QUANTIZATION_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label} — {opt.description}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Fixed-position success toast with BPM and auto-dismiss.
+ */
+function SuccessToast({ bpm, onDismiss }) {
+  return (
+    <div className="
+      fixed bottom-6 right-6 z-50
+      animate-slide-up
+      flex items-center gap-3
+      rounded-xl border border-acid-500/40 bg-zinc-900/95 backdrop-blur-sm
+      px-4 py-3 shadow-[0_0_30px_rgba(163,230,53,0.15)]
+      max-w-xs
+    ">
+      <CheckCircle2 className="w-5 h-5 text-acid-400 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="font-mono text-sm font-semibold text-acid-400">¡Extracción completa!</p>
+        <p className="font-mono text-xs text-zinc-400">
+          BPM detectado: <span className="text-acid-300 font-bold">{bpm}</span>
+        </p>
+      </div>
+      <button
+        onClick={onDismiss}
+        className="text-zinc-600 hover:text-zinc-300 transition-colors shrink-0"
+      >
+        <X className="w-4 h-4" />
+      </button>
     </div>
   )
 }

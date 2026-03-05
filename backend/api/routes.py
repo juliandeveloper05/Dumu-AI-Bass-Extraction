@@ -3,7 +3,7 @@ import uuid
 import asyncio
 import subprocess
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 
 from services.audio_engine import BassExtractor
@@ -71,7 +71,7 @@ def _convert_to_mp3_if_needed(file_path: str) -> str:
         return file_path  # Fall back to original
 
 
-def _run_pipeline(file_path: str, job_id: str, original_filename: str) -> None:
+def _run_pipeline(file_path: str, job_id: str, original_filename: str, quantization: str = "1/16") -> None:
     """
     Blocking pipeline call.
     Runs inside a thread via asyncio.to_thread() so the event loop
@@ -84,7 +84,8 @@ def _run_pipeline(file_path: str, job_id: str, original_filename: str) -> None:
     engine = BassExtractor(file_path)
     try:
         bpm, midi_b64 = engine.process_pipeline(
-            progress_callback=lambda pct, msg: job_store.push_event(job_id, pct, msg)
+            progress_callback=lambda pct, msg: job_store.push_event(job_id, pct, msg),
+            quantization=quantization,
         )
         job_store.store_result(job_id, {
             "bpm": bpm,
@@ -100,7 +101,10 @@ def _run_pipeline(file_path: str, job_id: str, original_filename: str) -> None:
 
 
 @router.post("/process")
-async def process(audio_file: UploadFile = File(...)):
+async def process(
+    audio_file: UploadFile = File(...),
+    quantization: str = Form("1/16"),
+):
     # ── Validate extension ───────────────────────────────────────────────────
     ext = os.path.splitext(audio_file.filename)[-1].lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -132,7 +136,7 @@ async def process(audio_file: UploadFile = File(...)):
     # Wrap pipeline in semaphore-protected task to limit concurrency
     async def _protected_pipeline():
         async with job_semaphore:
-            await asyncio.to_thread(_run_pipeline, file_path, job_id, audio_file.filename)
+            await asyncio.to_thread(_run_pipeline, file_path, job_id, audio_file.filename, quantization)
 
     asyncio.create_task(_protected_pipeline())
 
