@@ -4,17 +4,22 @@
  * Hook that opens an SSE connection to the backend progress endpoint.
  * Uses the native EventSource Web API — no external dependencies.
  *
+ * Distinguishes two failure modes:
+ *   - `error`          — backend sent an explicit error event (progress = -1)
+ *   - `connectionLost` — SSE transport dropped (network timeout, proxy cut-off)
+ *
  * Usage:
- *   const { logs, progress, done, error } = useProgressStream(jobId)
+ *   const { logs, progress, done, error, connectionLost } = useProgressStream(jobId)
  */
 import { useEffect, useState, useRef } from 'react'
 import { API_ORIGIN } from '../api/bassApi'
 
 export function useProgressStream(jobId) {
-  const [logs, setLogs]         = useState([])
-  const [progress, setProgress] = useState(0)
-  const [done, setDone]         = useState(false)
-  const [error, setError]       = useState(null)
+  const [logs, setLogs]                     = useState([])
+  const [progress, setProgress]             = useState(0)
+  const [done, setDone]                     = useState(false)
+  const [error, setError]                   = useState(null)
+  const [connectionLost, setConnectionLost] = useState(false)
   const esRef = useRef(null)
 
   useEffect(() => {
@@ -25,6 +30,7 @@ export function useProgressStream(jobId) {
     setProgress(0)
     setDone(false)
     setError(null)
+    setConnectionLost(false)
 
     const es = new EventSource(`${API_ORIGIN}/api/progress/${jobId}`)
     esRef.current = es
@@ -33,7 +39,7 @@ export function useProgressStream(jobId) {
       try {
         const { progress: pct, message } = JSON.parse(e.data)
 
-        // Error event from backend (progress = -1)
+        // Backend-sent error event (progress = -1)
         if (pct < 0) {
           setError(message)
           setLogs((prev) => [...prev, message])
@@ -53,9 +59,11 @@ export function useProgressStream(jobId) {
       }
     }
 
+    // Transport-level drop (proxy timeout, network cut-off, etc.)
+    // NOT a backend processing error — the job may still be running.
     es.onerror = () => {
-      setError('⚠️ Stream connection lost.')
-      setLogs((prev) => [...prev, '⚠️ Stream connection lost.'])
+      setConnectionLost(true)
+      setLogs((prev) => [...prev, '⚠️ Stream disconnected — switching to polling...'])
       es.close()
     }
 
@@ -65,5 +73,5 @@ export function useProgressStream(jobId) {
     }
   }, [jobId])
 
-  return { logs, progress, done, error }
+  return { logs, progress, done, error, connectionLost }
 }
