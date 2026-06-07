@@ -191,6 +191,7 @@ async def ws_process(websocket: WebSocket):
             "bpm": result["bpm"],
             "midi_b64": result["midi_b64"],
             "bass_audio_b64": result.get("bass_audio_b64"),
+            "original_audio_b64": result.get("original_audio_b64"),
             "filename": filename,
         }
         if waveform_data:
